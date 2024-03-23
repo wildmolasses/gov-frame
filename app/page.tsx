@@ -53,6 +53,13 @@ export default async function Home({ searchParams }: NextServerPageProps) {
 
   console.log("info: state is:", state);
 
+	// 3 buttons	Happy neutral unhappy
+	// Store in vercel kv
+	// Allow for setting that cn token gate from
+	// User posts url with the frame
+	//	- So on cast the poll should be created on cast
+	//
+	//
   // then, when done, return next frame
   return (
     <div className="p-4">
@@ -102,15 +109,14 @@ export default async function Home({ searchParams }: NextServerPageProps) {
             )}
           </div>
         </FrameImage>
-        <FrameInput text="put some text here" />
         <FrameButton>
-          {state?.active === "1" ? "Active" : "Inactive"}
+          Happy
         </FrameButton>
         <FrameButton>
-          {state?.active === "2" ? "Active" : "Inactive"}
+          Neutral
         </FrameButton>
-        <FrameButton action="link" target={`https://www.google.com`}>
-          External
+        <FrameButton>
+          Unhappy
         </FrameButton>
       </FrameContainer>
     </div>
