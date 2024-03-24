@@ -13,13 +13,17 @@
     "update-framesjs": "yarn upgrade frames.js@latest && yarn run update-debugger"
   },
   "dependencies": {
+    "@apollo/client": "^3.9.9",
     "@farcaster/core": "^0.14.3",
     "@noble/ed25519": "^2.0.0",
+    "@tanstack/react-query": "^5.28.6",
     "@vercel/kv": "^1.0.1",
     "@xmtp/frames-validator": "^0.5.0",
     "class-variance-authority": "^0.7.0",
     "clsx": "^2.1.0",
     "frames.js": "^0.9.3",
+    "graphql": "^16.8.1",
+    "graphql-request": "^6.1.0",
     "lucide-react": "^0.331.0",
     "next": "^14.1.0",
     "react": "^18.2.0",
@@ -32,6 +36,9 @@
   },
   "devDependencies": {
     "@frames.js/debugger": "^0.1.9",
+    "@graphql-codegen/cli": "^5.0.2",
+    "@graphql-codegen/client-preset": "^4.2.4",
+    "@parcel/watcher": "^2.4.1",
     "@types/node": "^18.17.0",
     "@types/react": "^18.2.0",
     "@types/react-dom": "^18.2.0",
