@@ -43,11 +43,13 @@ const singleVoteReducer: FrameReducer<State> = async (state, action) => {
 	return resp
 }
 
+
 const reducer = async (state: State, action: PreviousFrame, voteWeight: number) => {
 	console.log(action)
 	console.log(state)
 	// From the FID get weight
 	// console.log(action?.postBody?.untrustedData?.castId)
+	const voted = await kv.hget(`poll:${state.id}:${action.postBody?.untrustedData?.fid}`, "vote");
 	
 	// 1. check address has voted 
 	// 2. if the address has voted then decrement the previous vote
@@ -56,13 +58,35 @@ const reducer = async (state: State, action: PreviousFrame, voteWeight: number) 
 	let happy = Number(state.happy)
 	let neutral = Number(state.neutral)
 	let unhappy = Number(state.unhappy)
+	let votePref = voted
+
+	if (voted) {
+	  if (voted === HAPPY) {
+	  	happy = happy  - voteWeight
+	  } else if (voted === NEUTRAL) {
+	  	neutral = neutral  - voteWeight
+	  } else if (pressedBtn === UNHAPPY) {
+	  	unhappy = unhappy - voteWeight
+	  	votePref = 3
+	  }
+	}
+
+
 	if (pressedBtn === HAPPY) {
 		happy = happy  + voteWeight
+		votePref = 1
 	} else if (pressedBtn === NEUTRAL) {
 		neutral = neutral  + voteWeight
+		votePref = 2
 	} else if (pressedBtn === UNHAPPY) {
 		unhappy = unhappy + voteWeight
+		votePref = 3
 	}
+
+	if (!voted) {
+		await kv.hset(`poll:${state.id}:${action.postBody?.untrustedData?.fid}`, {vote: votePref});
+	}
+
 
 	console.log({id: state.id, happy, neutral, unhappy})
 	console.log(pressedBtn)
@@ -81,6 +105,7 @@ const getOrCreatePoll = async (id: string) => {
 	console.log("Exitsts")
 	if (!exists) {
 		const defaultValues = {id: id, happy: 0, unhappy: 0, neutral: 0}
+		console.log(id, defaultValues)
 	  await kv.hset(`poll:${id}`, defaultValues);
 		return defaultValues
 	}
@@ -109,7 +134,9 @@ export default async function Home({ searchParams }: NextServerPageProps) {
   if (frameMessage && !frameMessage?.isValid) {
     throw new Error("Invalid frame payload");
   }
-	const initialState = await getOrCreatePoll(defaultProposalId)
+	console.log(searchParams)
+	console.log(defaultProposalId)
+	const initialState = await getOrCreatePoll(defaultProposalId || previousFrame?.prevState?.id)
 	console.log("initialState")
 	console.log(initialState)
 
