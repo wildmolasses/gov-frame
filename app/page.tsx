@@ -8,8 +8,10 @@ import {
   getFrameMessage,
   getPreviousFrame,
   useFramesReducer,
+  PreviousFrame,
 } from "frames.js/next/server";
 import Link from "next/link";
+import { kv } from "@vercel/kv";
 import { DEFAULT_DEBUGGER_HUB_URL, createDebugUrl } from "./debug";
 import { currentURL } from "./utils";
 import { gql, ApolloQueryResult } from "@apollo/client";
@@ -17,8 +19,12 @@ import createApolloClient from "./apollo-client";
 import { Proposal, Vp, User } from "./gql/graphql";
 
 type State = {
-  active: string;
-  total_button_presses: number;
+  id: string;
+  h: number;
+  u: number;
+  n: number;
+  voter: string;
+  voteChoice: number;
 };
 
 function nFormatter(num, digits) {
@@ -38,14 +44,87 @@ function nFormatter(num, digits) {
     : "0";
 }
 
-const initialState = { active: "1", total_button_presses: 0 };
+const HAPPY = 1;
+const NEUTRAL = 2;
+const UNHAPPY = 3;
 
-const reducer: FrameReducer<State> = (state, action) => {
+// const initialState = { active: "1", total_button_presses: 0 };
+// const initialState = { id: "here"};
+
+// 1. Get verified addresses with fid
+// 2. Get weight for the configured token
+// 3. Then apply the same incrementing rules
+// const votingPowerReducer: FrameReducer<State> = async (state, action) => {
+// 	const resp = await reducer(state, action, 1)
+// 	return resp
+// }
+
+const singleVoteReducer: FrameReducer<State> = async (state, action) => {
+  const resp = await reducer(state, action, 1);
+  return resp;
+};
+
+const reducer = async (
+  state: State,
+  action: PreviousFrame,
+  voteWeight: number
+) => {
+  console.log(action);
+  console.log(state);
+  // From the FID get weight
+  // console.log(action?.postBody?.untrustedData?.castId)
+  const voted = await kv.hget(
+    `poll:${state.id}:${action.postBody?.untrustedData?.fid}`,
+    "vote"
+  );
+
+  // 1. check address has voted
+  // 2. if the address has voted then decrement the previous vote
+  // 3. increment the new vote and overwrite the vote
+  const pressedBtn = action.postBody?.untrustedData.buttonIndex;
+  let happy = Number(state.h);
+  let neutral = Number(state.n);
+  let unhappy = Number(state.u);
+  let votePref = voted;
+
+  if (voted) {
+    if (voted === HAPPY) {
+      happy = happy - voteWeight;
+    } else if (voted === NEUTRAL) {
+      neutral = neutral - voteWeight;
+    } else if (pressedBtn === UNHAPPY) {
+      unhappy = unhappy - voteWeight;
+      votePref = 3;
+    }
+  }
+
+  if (pressedBtn === HAPPY) {
+    happy = happy + voteWeight;
+    votePref = 1;
+  } else if (pressedBtn === NEUTRAL) {
+    neutral = neutral + voteWeight;
+    votePref = 2;
+  } else if (pressedBtn === UNHAPPY) {
+    unhappy = unhappy + voteWeight;
+    votePref = 3;
+  }
+
+  if (!voted) {
+    await kv.hset(`poll:${state.id}:${action.postBody?.untrustedData?.fid}`, {
+      vote: votePref,
+    });
+  }
+
+  console.log({ id: state.id, happy, neutral, unhappy });
+  console.log(pressedBtn);
+  await kv.hset(`poll:${state.id}`, { id: state.id, happy, neutral, unhappy });
   return {
-    total_button_presses: state.total_button_presses + 1,
-    active: action.postBody?.untrustedData.buttonIndex
-      ? String(action.postBody?.untrustedData.buttonIndex)
-      : "1",
+    id: state.id,
+    h: happy,
+    n: neutral,
+    u: unhappy,
+    voter: state.voter,
+    voteChoice: state.voteChoice,
   };
 };
 
@@ -120,11 +199,44 @@ const createUserQuery = ({ voter }: { voter: string }) => {
   }
 `);
 };
+// ID will be snapshot proposal id
+const getOrCreatePoll = async (
+  id: string,
+  voter: string,
+  voteChoice: number
+) => {
+  const exists = await kv.hget(`poll:${id}`, "id");
+  console.log("Exitsts");
+  if (!exists) {
+    const defaultValues = { id: id, happy: 0, unhappy: 0, neutral: 0 };
+    console.log(id, defaultValues);
+    await kv.hset(`poll:${id}`, defaultValues);
+    return defaultValues;
+  }
+  // Can be optimized
+  const happy = (await kv.hget(`poll:${id}`, "happy")) as number;
+  const unhappy = (await kv.hget(`poll:${id}`, "unhappy")) as number;
+  const neutral = (await kv.hget(`poll:${id}`, "neutral")) as number;
+  return {
+    id,
+    h: Number(happy),
+    u: Number(unhappy),
+    n: Number(neutral),
+    voter,
+    voteChoice,
+  };
+};
 
 // This is a react server component only
+// 1. Add gating
+// 2. If gating configured use similar logic to multi reducer
+// and conditionally display message at the bottom
 export default async function Home({ searchParams }: NextServerPageProps) {
+  const defaultProposalId = searchParams?.id as string;
   const url = currentURL("/");
   const previousFrame = getPreviousFrame<State>(searchParams);
+  // console.log(previousFrame)
+
   const frameMessage = await getFrameMessage(previousFrame.postBody, {
     hubHttpUrl: DEFAULT_DEBUGGER_HUB_URL,
   });
@@ -133,14 +245,29 @@ export default async function Home({ searchParams }: NextServerPageProps) {
     throw new Error("Invalid frame payload");
   }
 
+  const { id: proposalId, voter, voteChoice } = searchParams;
+  console.log(searchParams);
+  console.log(defaultProposalId);
+  const initialState = await getOrCreatePoll(
+    defaultProposalId || previousFrame?.prevState?.id,
+    voter || previousFrame?.prevState?.voter,
+    voteChoice || previousFrame?.prevState?.voteChoice
+  );
+  console.log("initialState");
+  console.log(initialState);
+
+  // get/create poll
+
   // eslint-disable-next-line
   const [state, dispatch] = useFramesReducer<State>(
-    reducer,
+    singleVoteReducer as FrameReducer<State>,
     initialState,
     previousFrame
   );
+  const awaitedState = await state;
 
-  const { proposalId, voter, voteChoice } = searchParams;
+  // create poll if doesn't exist
+  // https://docs.farcaster.xyz/reference/hubble/httpapi/verification
 
   const {
     proposal,
@@ -166,7 +293,15 @@ export default async function Home({ searchParams }: NextServerPageProps) {
 
   const userAvatar = undefined;
   // user.avatar ? maybeIpfsUrl(user.avatar) : undefined;
+  // console.log("info: state is:", state);
 
+  // 3 buttons	Happy neutral unhappy
+  // Store in vercel kv
+  // Allow for setting that cn token gate from
+  // User posts url with the frame
+  //	- So on cast the poll should be created on cast
+  //
+  //
   // then, when done, return next frame
   return (
     <div className="p-4">
@@ -182,7 +317,7 @@ export default async function Home({ searchParams }: NextServerPageProps) {
       <FrameContainer
         postUrl="/frames"
         pathname="/"
-        state={state}
+        state={awaitedState}
         previousFrame={previousFrame}
       >
         {/* <FrameImage src="https://framesjs.org/og.png" /> */}
@@ -277,16 +412,12 @@ export default async function Home({ searchParams }: NextServerPageProps) {
             )} */}
           </div>
         </FrameImage>
-        <FrameInput text="put some text here" />
-        <FrameButton>
-          {state?.active === "1" ? "Active" : "Inactive"}
-        </FrameButton>
-        <FrameButton>
-          {state?.active === "2" ? "Active" : "Inactive"}
-        </FrameButton>
         <FrameButton action="link" target={proposal.link as string}>
           View on Snapshot
         </FrameButton>
+        <FrameButton>Agree</FrameButton>
+        <FrameButton>Neutral</FrameButton>
+        <FrameButton>Disagree</FrameButton>
       </FrameContainer>
     </div>
   );
