@@ -8,6 +8,7 @@ import {
   getFrameMessage,
   getPreviousFrame,
   useFramesReducer,
+	PreviousFrame
 } from "frames.js/next/server";
 import Link from "next/link";
 import {kv} from "@vercel/kv";
@@ -29,21 +30,38 @@ const UNHAPPY = 3;
 // const initialState = { active: "1", total_button_presses: 0 };
 // const initialState = { id: "here"};
 
-const reducer: FrameReducer<State> = async (state, action) => {
+// 1. Get verified addresses with fid
+// 2. Get weight for the configured token
+// 3. Then apply the same incrementing rules
+// const votingPowerReducer: FrameReducer<State> = async (state, action) => {
+// 	const resp = await reducer(state, action, 1)
+// 	return resp
+// }
+
+const singleVoteReducer: FrameReducer<State> = async (state, action) => {
+	const resp = await reducer(state, action, 1)
+	return resp
+}
+
+const reducer = async (state: State, action: PreviousFrame, voteWeight: number) => {
 	console.log(action)
 	console.log(state)
+	// From the FID get weight
 	// console.log(action?.postBody?.untrustedData?.castId)
+	
+	// 1. check address has voted 
+	// 2. if the address has voted then decrement the previous vote
+	// 3. increment the new vote and overwrite the vote
 	const pressedBtn = action.postBody?.untrustedData.buttonIndex;
-	const voteWeight = 1;
 	let happy = Number(state.happy)
 	let neutral = Number(state.neutral)
 	let unhappy = Number(state.unhappy)
 	if (pressedBtn === HAPPY) {
-		happy = happy  + 1
+		happy = happy  + voteWeight
 	} else if (pressedBtn === NEUTRAL) {
-		neutral = neutral  + 1
+		neutral = neutral  + voteWeight
 	} else if (pressedBtn === UNHAPPY) {
-		unhappy = unhappy + 1
+		unhappy = unhappy + voteWeight
 	}
 
 	console.log({id: state.id, happy, neutral, unhappy})
@@ -57,12 +75,8 @@ const reducer: FrameReducer<State> = async (state, action) => {
   };
 };
 
-// 1. Get or create poll
-// 2. Create vote
-// 3. Add vote to value
-// 4. decrement from value when vote is changed
+	// ID will be snapshot proposal id
 const getOrCreatePoll = async (id: string) => {
-	// id will be snapshot proposal id
 	const exists = await kv.hget(`poll:${id}`, "id");
 	console.log("Exitsts")
 	if (!exists) {
@@ -70,7 +84,7 @@ const getOrCreatePoll = async (id: string) => {
 	  await kv.hset(`poll:${id}`, defaultValues);
 		return defaultValues
 	}
-	// can be optimized
+	// Can be optimized
 	const happy = await kv.hget(`poll:${id}`, "happy") as number;
 	const unhappy = await kv.hget(`poll:${id}`, "unhappy") as number;
 	const neutral = await kv.hget(`poll:${id}`, "neutral") as number;
@@ -79,8 +93,11 @@ const getOrCreatePoll = async (id: string) => {
 }
 
 // This is a react server component only
+// 1. Add gating
+// 2. If gating configured use similar logic to multi reducer
+// and conditionally display message at the bottom
 export default async function Home({ searchParams }: NextServerPageProps) {
-	const defaultProposalId = '0x1204041955b729052b9adb4da9e3fa9a03c415ca45aeefd5c41da4d9d45ea85';
+	const defaultProposalId = searchParams?.id as string;
   const url = currentURL("/");
   const previousFrame = getPreviousFrame<State>(searchParams);
 	// console.log(previousFrame)
@@ -99,7 +116,7 @@ export default async function Home({ searchParams }: NextServerPageProps) {
 	// get/create poll
 
   const [state, dispatch] = useFramesReducer<State>(
-    reducer,
+    singleVoteReducer as FrameReducer<State>,
     initialState,
     previousFrame
   );
