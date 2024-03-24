@@ -8,31 +8,99 @@ import {
   getFrameMessage,
   getPreviousFrame,
   useFramesReducer,
+	PreviousFrame
 } from "frames.js/next/server";
 import Link from "next/link";
+import {kv} from "@vercel/kv";
 import { DEFAULT_DEBUGGER_HUB_URL, createDebugUrl } from "./debug";
 import { currentURL } from "./utils";
 
 type State = {
-  active: string;
-  total_button_presses: number;
+	id: string,
+	happy: number,
+	unhappy: number,
+	neutral: number
 };
 
-const initialState = { active: "1", total_button_presses: 0 };
+const HAPPY = 1;
+const NEUTRAL= 2;
+const UNHAPPY = 3;
 
-const reducer: FrameReducer<State> = (state, action) => {
+
+// const initialState = { active: "1", total_button_presses: 0 };
+// const initialState = { id: "here"};
+
+// 1. Get verified addresses with fid
+// 2. Get weight for the configured token
+// 3. Then apply the same incrementing rules
+// const votingPowerReducer: FrameReducer<State> = async (state, action) => {
+// 	const resp = await reducer(state, action, 1)
+// 	return resp
+// }
+
+const singleVoteReducer: FrameReducer<State> = async (state, action) => {
+	const resp = await reducer(state, action, 1)
+	return resp
+}
+
+const reducer = async (state: State, action: PreviousFrame, voteWeight: number) => {
+	console.log(action)
+	console.log(state)
+	// From the FID get weight
+	// console.log(action?.postBody?.untrustedData?.castId)
+	
+	// 1. check address has voted 
+	// 2. if the address has voted then decrement the previous vote
+	// 3. increment the new vote and overwrite the vote
+	const pressedBtn = action.postBody?.untrustedData.buttonIndex;
+	let happy = Number(state.happy)
+	let neutral = Number(state.neutral)
+	let unhappy = Number(state.unhappy)
+	if (pressedBtn === HAPPY) {
+		happy = happy  + voteWeight
+	} else if (pressedBtn === NEUTRAL) {
+		neutral = neutral  + voteWeight
+	} else if (pressedBtn === UNHAPPY) {
+		unhappy = unhappy + voteWeight
+	}
+
+	console.log({id: state.id, happy, neutral, unhappy})
+	console.log(pressedBtn)
+	await kv.hset(`poll:${state.id}`, {id: state.id, happy, neutral, unhappy});
   return {
-    total_button_presses: state.total_button_presses + 1,
-    active: action.postBody?.untrustedData.buttonIndex
-      ? String(action.postBody?.untrustedData.buttonIndex)
-      : "1",
+		id: state.id,
+    happy:  happy,
+    neutral:  neutral,
+    unhappy:  unhappy,
   };
 };
 
+	// ID will be snapshot proposal id
+const getOrCreatePoll = async (id: string) => {
+	const exists = await kv.hget(`poll:${id}`, "id");
+	console.log("Exitsts")
+	if (!exists) {
+		const defaultValues = {id: id, happy: 0, unhappy: 0, neutral: 0}
+	  await kv.hset(`poll:${id}`, defaultValues);
+		return defaultValues
+	}
+	// Can be optimized
+	const happy = await kv.hget(`poll:${id}`, "happy") as number;
+	const unhappy = await kv.hget(`poll:${id}`, "unhappy") as number;
+	const neutral = await kv.hget(`poll:${id}`, "neutral") as number;
+	return {id, happy: Number(happy), unhappy: Number(unhappy), neutral: Number(neutral)}
+  
+}
+
 // This is a react server component only
+// 1. Add gating
+// 2. If gating configured use similar logic to multi reducer
+// and conditionally display message at the bottom
 export default async function Home({ searchParams }: NextServerPageProps) {
+	const defaultProposalId = searchParams?.id as string;
   const url = currentURL("/");
   const previousFrame = getPreviousFrame<State>(searchParams);
+	// console.log(previousFrame)
 
   const frameMessage = await getFrameMessage(previousFrame.postBody, {
     hubHttpUrl: DEFAULT_DEBUGGER_HUB_URL,
@@ -41,18 +109,34 @@ export default async function Home({ searchParams }: NextServerPageProps) {
   if (frameMessage && !frameMessage?.isValid) {
     throw new Error("Invalid frame payload");
   }
+	const initialState = await getOrCreatePoll(defaultProposalId)
+	console.log("initialState")
+	console.log(initialState)
+
+	// get/create poll
 
   const [state, dispatch] = useFramesReducer<State>(
-    reducer,
+    singleVoteReducer as FrameReducer<State>,
     initialState,
     previousFrame
   );
+	const awaitedState = await state
+
+	// create poll if doesn't exist
+	// https://docs.farcaster.xyz/reference/hubble/httpapi/verification
 
   // Here: do a server side side effect either sync or async (using await), such as minting an NFT if you want.
   // example: load the users credentials & check they have an NFT
 
-  console.log("info: state is:", state);
+  // console.log("info: state is:", state);
 
+	// 3 buttons	Happy neutral unhappy
+	// Store in vercel kv
+	// Allow for setting that cn token gate from
+	// User posts url with the frame
+	//	- So on cast the poll should be created on cast
+	//
+	//
   // then, when done, return next frame
   return (
     <div className="p-4">
@@ -68,7 +152,7 @@ export default async function Home({ searchParams }: NextServerPageProps) {
       <FrameContainer
         postUrl="/frames"
         pathname="/"
-        state={state}
+        state={awaitedState}
         previousFrame={previousFrame}
       >
         {/* <FrameImage src="https://framesjs.org/og.png" /> */}
@@ -102,15 +186,14 @@ export default async function Home({ searchParams }: NextServerPageProps) {
             )}
           </div>
         </FrameImage>
-        <FrameInput text="put some text here" />
         <FrameButton>
-          {state?.active === "1" ? "Active" : "Inactive"}
+          Happy
         </FrameButton>
         <FrameButton>
-          {state?.active === "2" ? "Active" : "Inactive"}
+          Neutral
         </FrameButton>
-        <FrameButton action="link" target={`https://www.google.com`}>
-          External
+        <FrameButton>
+          Unhappy
         </FrameButton>
       </FrameContainer>
     </div>
